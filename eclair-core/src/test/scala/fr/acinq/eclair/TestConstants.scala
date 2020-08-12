@@ -22,11 +22,12 @@ import java.util.concurrent.atomic.AtomicLong
 
 import com.opentable.db.postgres.embedded.EmbeddedPostgres
 import fr.acinq.bitcoin.Crypto.PrivateKey
-import fr.acinq.bitcoin.{Block, ByteVector32, Script}
+import fr.acinq.bitcoin.{Block, ByteVector32, Satoshi, Script}
 import fr.acinq.eclair.FeatureSupport.Optional
 import fr.acinq.eclair.Features._
 import fr.acinq.eclair.NodeParams.BITCOIND
 import fr.acinq.eclair.blockchain.fee._
+import fr.acinq.eclair.channel.HostedParams
 import fr.acinq.eclair.crypto.LocalKeyManager
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.db.pg.PgUtils.NoLock
@@ -210,7 +211,19 @@ object TestConstants {
       socksProxy_opt = None,
       maxPaymentAttempts = 5,
       enableTrampolinePayment = true,
-      instanceId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+      instanceId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+      hostedParams = HostedParams(
+        feeBase = MilliSatoshi(1000L),
+        feeProportionalMillionth = 100,
+        cltvDelta = CltvExpiryDelta(432),
+        onChainRefundThreshold = Satoshi(1000000L),
+        liabilityDeadlineBlockdays = 1000,
+        defaultCapacity = MilliSatoshi(100000000000L),
+        defaultClientBalance = MilliSatoshi(100000000L),
+        maxHtlcValueInFlightMsat = UInt64(5000000000L),
+        htlcMinimum = MilliSatoshi(1000L),
+        maxAcceptedHtlcs = 10
+      )
     )
 
     def channelParams = Peer.makeChannelParams(
@@ -299,7 +312,19 @@ object TestConstants {
       socksProxy_opt = None,
       maxPaymentAttempts = 5,
       enableTrampolinePayment = true,
-      instanceId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+      instanceId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+      hostedParams = HostedParams(
+        feeBase = MilliSatoshi(1000L),
+        feeProportionalMillionth = 100,
+        cltvDelta = CltvExpiryDelta(432),
+        onChainRefundThreshold = Satoshi(1000000L),
+        liabilityDeadlineBlockdays = 1000,
+        defaultCapacity = MilliSatoshi(100000000000L),
+        defaultClientBalance = MilliSatoshi(100000000L),
+        maxHtlcValueInFlightMsat = UInt64(5000000000L),
+        htlcMinimum = MilliSatoshi(1000L),
+        maxAcceptedHtlcs = 10
+      )
     )
 
     def channelParams = Peer.makeChannelParams(

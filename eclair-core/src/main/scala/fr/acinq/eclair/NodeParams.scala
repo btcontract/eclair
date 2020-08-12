@@ -28,7 +28,7 @@ import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.{Block, ByteVector32, Satoshi}
 import fr.acinq.eclair.NodeParams.WatcherType
 import fr.acinq.eclair.blockchain.fee.{FeeEstimator, FeeTargets, FeerateTolerance, OnChainFeeConf}
-import fr.acinq.eclair.channel.Channel
+import fr.acinq.eclair.channel.{Channel, HostedParams}
 import fr.acinq.eclair.crypto.KeyManager
 import fr.acinq.eclair.db._
 import fr.acinq.eclair.router.Router.RouterConf
@@ -87,7 +87,8 @@ case class NodeParams(keyManager: KeyManager,
                       routerConf: RouterConf,
                       socksProxy_opt: Option[Socks5ProxyParams],
                       maxPaymentAttempts: Int,
-                      enableTrampolinePayment: Boolean) {
+                      enableTrampolinePayment: Boolean,
+                      hostedParams: HostedParams) {
   val privateKey = keyManager.nodeKey.privateKey
   val nodeId = keyManager.nodeId
 
@@ -313,7 +314,19 @@ object NodeParams {
       ),
       socksProxy_opt = socksProxy_opt,
       maxPaymentAttempts = config.getInt("max-payment-attempts"),
-      enableTrampolinePayment = config.getBoolean("trampoline-payments-enable")
+      enableTrampolinePayment = config.getBoolean("trampoline-payments-enable"),
+      hostedParams = HostedParams(
+        feeBase = MilliSatoshi(config.getLong("hosted.fee-base-msat")),
+        feeProportionalMillionth = config.getInt("hosted.fee-proportional-millionths"),
+        cltvDelta = CltvExpiryDelta(config.getInt("hosted.cltv-delta")),
+        onChainRefundThreshold = Satoshi(config.getLong("hosted.on-chain-refund-threshold-sat")),
+        liabilityDeadlineBlockdays = config.getInt("hosted.liability-deadline-blockdays"),
+        defaultCapacity = MilliSatoshi(config.getLong("hosted.default-capacity-msat")),
+        defaultClientBalance = MilliSatoshi(config.getLong("hosted.default-client-balance-msat")),
+        maxHtlcValueInFlightMsat = UInt64(config.getLong("hosted.max-htlc-value-in-flight-msat")),
+        htlcMinimum = MilliSatoshi(config.getLong("hosted.htlc-minimum-msat")),
+        maxAcceptedHtlcs = config.getInt("hosted.max-accepted-htlcs")
+      )
     )
   }
 }
