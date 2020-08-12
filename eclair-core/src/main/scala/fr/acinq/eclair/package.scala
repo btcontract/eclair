@@ -51,6 +51,18 @@ package object eclair {
     channelId
   }
 
+  def hostedChanId(pubkey1: ByteVector, pubkey2: ByteVector): ByteVector32 = {
+    val pubkey1First: Boolean = LexicographicalOrdering.isLessThan(pubkey1, pubkey2)
+    if (pubkey1First) Crypto.sha256(pubkey1 ++ pubkey2) else Crypto.sha256(pubkey2 ++ pubkey1)
+  }
+
+  def randomHostedChanShortId: ShortChannelId = {
+    val boundedBlock = secureRandom.nextInt(16777215 + 1)
+    val pseudoTransaction = secureRandom.nextInt(16777215 + 1)
+    val pseudoOutput = secureRandom.nextInt(65534 + 1)
+    ShortChannelId(boundedBlock, pseudoTransaction, pseudoOutput)
+  }
+
   def serializationResult(attempt: Attempt[BitVector]): ByteVector = attempt match {
     case Attempt.Successful(bin) => bin.toByteVector
     case Attempt.Failure(cause) => throw new RuntimeException(s"serialization error: $cause")
