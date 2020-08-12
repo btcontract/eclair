@@ -40,6 +40,8 @@ trait Databases {
 
   val channels: ChannelsDb
 
+  val hostedChannels: HostedChannelsDb
+
   val peers: PeersDb
 
   val payments: PaymentsDb
@@ -155,6 +157,7 @@ object Databases extends Logging {
       override val network = new PgNetworkDb
       override val audit = new PgAuditDb
       override val channels = new PgChannelsDb
+      override val hostedChannels = new PgHostedChannelsDb
       override val peers = new PgPeersDb
       override val payments = new PgPaymentsDb
       override val pendingRelay = new PgPendingRelayDb
@@ -168,6 +171,7 @@ object Databases extends Logging {
     override val network = new SqliteNetworkDb(networkJdbc)
     override val audit = new SqliteAuditDb(auditJdbc)
     override val channels = new SqliteChannelsDb(eclairJdbc)
+    override val hostedChannels: HostedChannelsDb = null
     override val peers = new SqlitePeersDb(eclairJdbc)
     override val payments = new SqlitePaymentsDb(eclairJdbc)
     override val pendingRelay = new SqlitePendingRelayDb(eclairJdbc)
