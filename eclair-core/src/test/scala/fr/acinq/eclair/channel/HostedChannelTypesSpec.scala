@@ -79,7 +79,7 @@ class HostedChannelTypesSpec extends AnyFunSuite {
     assert(bobLocallySignedLCSS.reverse.verifyRemoteSig(bobPrivKey.publicKey)) // Alice verifies Bob remote sig of Alice local view of LCSS
   }
 
-  val hdc: HOSTED_DATA_COMMITMENTS = HOSTED_DATA_COMMITMENTS(randomKey.publicKey, ChannelVersion.HOSTED_STANDARD, lcss1, futureUpdates = Nil, localCommitmentSpec, originChannels = Map.empty,
+  val hdc: HOSTED_DATA_COMMITMENTS = HOSTED_DATA_COMMITMENTS(randomKey.publicKey, ChannelVersion.HOSTED_PRIVATE, lcss1, futureUpdates = Nil, localCommitmentSpec, originChannels = Map.empty,
     channelId = randomBytes32, isHost = true, channelUpdate, localError = None, remoteError = None, failedToPeerHtlcLeftoverIds = Set.empty, fulfilledByPeerHtlcLeftoverIds = Set.empty, overrideProposal = None)
 
   def makeCmdAdd(amount: MilliSatoshi, destination: PublicKey, currentBlockHeight: Long): (ByteVector32, CMD_ADD_HTLC) = {
