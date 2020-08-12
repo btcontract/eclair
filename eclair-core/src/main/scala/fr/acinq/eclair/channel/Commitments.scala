@@ -46,6 +46,32 @@ case class RemoteCommit(index: Long, spec: CommitmentSpec, txid: ByteVector32, r
 case class WaitingForRevocation(nextRemoteCommit: RemoteCommit, sent: CommitSig, sentAfterLocalCommitIndex: Long, reSignAsap: Boolean = false)
 // @formatter:on
 
+trait ChannelCommitments {
+  def timedOutOutgoingHtlcs(blockheight: Long): Set[UpdateAddHtlc]
+
+  val availableBalanceForReceive: MilliSatoshi
+
+  val availableBalanceForSend: MilliSatoshi
+
+  val originChannels: Map[Long, Origin]
+
+  val channelId: ByteVector32
+
+  val announceChannel: Boolean
+
+  def failHtlc(nodeSecret: PrivateKey, cmd: CMD_FAIL_HTLC, add: UpdateAddHtlc): Try[UpdateFailHtlc] = {
+    Sphinx.PaymentPacket.peel(nodeSecret, add.paymentHash, add.onionRoutingPacket) match {
+      case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
+        val reason = cmd.reason match {
+          case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)
+          case Right(failure) => Sphinx.FailurePacket.create(sharedSecret, failure)
+        }
+        Success(UpdateFailHtlc(channelId, cmd.id, reason))
+      case Left(_) => Failure(CannotExtractSharedSecret(channelId, add))
+    }
+  }
+}
+
 /**
  * about remoteNextCommitInfo:
  * we either:
@@ -63,11 +89,11 @@ case class Commitments(channelVersion: ChannelVersion,
                        originChannels: Map[Long, Origin], // for outgoing htlcs relayed through us, details about the corresponding incoming htlcs
                        remoteNextCommitInfo: Either[WaitingForRevocation, PublicKey],
                        commitInput: InputInfo,
-                       remotePerCommitmentSecrets: ShaChain, channelId: ByteVector32) {
+                       remotePerCommitmentSecrets: ShaChain, channelId: ByteVector32) extends ChannelCommitments {
 
   require(!channelVersion.hasStaticRemotekey || (channelVersion.hasStaticRemotekey && localParams.staticPaymentBasepoint.isDefined), s"localParams.localPaymentBasepoint must be defined for commitments with version=$channelVersion")
 
-  val commitmentFormat = channelVersion.commitmentFormat
+  val commitmentFormat: CommitmentFormat = channelVersion.commitmentFormat
 
   def hasNoPendingHtlcs: Boolean = localCommit.spec.htlcs.isEmpty && remoteCommit.spec.htlcs.isEmpty && remoteNextCommitInfo.isRight
 
@@ -333,18 +359,8 @@ object Commitments {
         // we have already sent a fail/fulfill for this htlc
         Failure(UnknownHtlcId(commitments.channelId, cmd.id))
       case Some(htlc) =>
-        // we need the shared secret to build the error packet
-        Sphinx.PaymentPacket.peel(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket) match {
-          case Right(Sphinx.DecryptedPacket(_, _, sharedSecret)) =>
-            val reason = cmd.reason match {
-              case Left(forwarded) => Sphinx.FailurePacket.wrap(forwarded, sharedSecret)
-              case Right(failure) => Sphinx.FailurePacket.create(sharedSecret, failure)
-            }
-            val fail = UpdateFailHtlc(commitments.channelId, cmd.id, reason)
-            val commitments1 = addLocalProposal(commitments, fail)
-            Success((commitments1, fail))
-          case Left(_) => Failure(CannotExtractSharedSecret(commitments.channelId, htlc))
-        }
+        val failTry: Try[UpdateFailHtlc] = commitments.failHtlc(nodeSecret, cmd, htlc)
+        failTry.map(updateFail => (addLocalProposal(commitments, updateFail), updateFail))
       case None => Failure(UnknownHtlcId(commitments.channelId, cmd.id))
     }
 
