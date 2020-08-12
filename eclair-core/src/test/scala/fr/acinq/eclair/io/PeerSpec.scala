@@ -26,12 +26,12 @@ import com.google.common.net.HostAndPort
 import fr.acinq.bitcoin.{Btc, Script}
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.FeatureSupport.Optional
-import fr.acinq.eclair.Features.{Wumbo, StaticRemoteKey}
+import fr.acinq.eclair.Features.{StaticRemoteKey, Wumbo}
 import fr.acinq.eclair.TestConstants._
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.{EclairWallet, TestWallet}
 import fr.acinq.eclair.channel.states.StateTestsHelperMethods
-import fr.acinq.eclair.channel.{CMD_GETINFO, Channel, ChannelCreated, ChannelVersion, DATA_WAIT_FOR_ACCEPT_CHANNEL, HasCommitments, RES_GETINFO, WAIT_FOR_ACCEPT_CHANNEL}
+import fr.acinq.eclair.channel.{CMD_GETINFO, CMD_HOSTED_INPUT_DISCONNECTED, CMD_HOSTED_INPUT_RECONNECTED, Channel, ChannelCreated, ChannelVersion, DATA_WAIT_FOR_ACCEPT_CHANNEL, HasCommitments, RES_GETINFO, WAIT_FOR_ACCEPT_CHANNEL}
 import fr.acinq.eclair.io.Peer._
 import fr.acinq.eclair.wire.{ChannelCodecsSpec, Color, NodeAddress, NodeAnnouncement}
 import org.scalatest.funsuite.FixtureAnyFunSuiteLike
@@ -45,11 +45,12 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
 
   val fakeIPAddress: NodeAddress = NodeAddress.fromParts("1.2.3.4", 42000).get
 
-  case class FixtureParam(nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: TestProbe, relayer: TestProbe, peer: TestFSMRef[Peer.State, Peer.Data, Peer], peerConnection: TestProbe)
+  case class FixtureParam(nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: TestProbe, relayer: TestProbe, hostedChannelGateway: TestProbe, peer: TestFSMRef[Peer.State, Peer.Data, Peer], peerConnection: TestProbe)
 
   override protected def withFixture(test: OneArgTest): Outcome = {
     val watcher = TestProbe()
     val relayer = TestProbe()
+    val hostedGateway = TestProbe()
     val wallet: EclairWallet = new TestWallet()
     val remoteNodeId = Bob.nodeParams.nodeId
     val peerConnection = TestProbe()
@@ -66,8 +67,8 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
       aliceParams.db.network.addNode(bobAnnouncement)
     }
 
-    val peer: TestFSMRef[Peer.State, Peer.Data, Peer] = TestFSMRef(new Peer(aliceParams, remoteNodeId, watcher.ref, relayer.ref, wallet))
-    withFixture(test.toNoArgTest(FixtureParam(aliceParams, remoteNodeId, watcher, relayer, peer, peerConnection)))
+    val peer: TestFSMRef[Peer.State, Peer.Data, Peer] = TestFSMRef(new Peer(aliceParams, remoteNodeId, watcher.ref, relayer.ref, hostedGateway.ref, wallet))
+    withFixture(test.toNoArgTest(FixtureParam(aliceParams, remoteNodeId, watcher, relayer, hostedGateway, peer, peerConnection)))
   }
 
   def connect(remoteNodeId: PublicKey, peer: TestFSMRef[Peer.State, Peer.Data, Peer], peerConnection: TestProbe, channels: Set[HasCommitments] = Set.empty, remoteInit: wire.Init = wire.Init(Bob.nodeParams.features)): Unit = {
@@ -85,6 +86,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     import f._
     val probe = TestProbe()
     connect(remoteNodeId, peer, peerConnection, channels = Set(ChannelCodecsSpec.normal))
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED]
     probe.send(peer, Peer.GetPeerInfo)
     probe.expectMsg(PeerInfo(remoteNodeId, "CONNECTED", Some(fakeIPAddress.socketAddress), 1))
   }
@@ -96,6 +98,7 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     probe.send(peer, Peer.Init(Set.empty))
     probe.send(peer, Peer.Connect(remoteNodeId, address_opt = None))
     probe.expectMsg(PeerConnection.ConnectionResult.NoAddressFound)
+    hostedChannelGateway.expectNoMessage
   }
 
   test("successfully connect to peer at user request") { f =>
@@ -157,9 +160,10 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
 
     val probe = TestProbe()
     connect(remoteNodeId, peer, peerConnection, channels = Set(ChannelCodecsSpec.normal))
-
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED]
     probe.send(peer, Peer.Connect(remoteNodeId, None))
     probe.expectMsg(PeerConnection.ConnectionResult.AlreadyConnected)
+    hostedChannelGateway.expectNoMessage
   }
 
   test("handle disconnect in state CONNECTED") { f =>
@@ -170,15 +174,17 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
 
     probe.send(peer, Peer.GetPeerInfo)
     assert(probe.expectMsgType[Peer.PeerInfo].state == "CONNECTED")
-
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED]
     probe.send(peer, Peer.Disconnect(f.remoteNodeId))
     probe.expectMsg("disconnecting")
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_DISCONNECTED]
   }
 
   test("handle new connection in state CONNECTED") { f =>
     import f._
 
     connect(remoteNodeId, peer, peerConnection, channels = Set(ChannelCodecsSpec.normal))
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED]
     // this is just to extract inits
     val Peer.ConnectedData(_, _, localInit, remoteInit, _) = peer.stateData
 
@@ -195,11 +201,16 @@ class PeerSpec extends TestKitBaseClass with FixtureAnyFunSuiteLike with StateTe
     // peer should kill previous connection
     deathWatch.expectTerminated(peerConnection1.ref)
     awaitCond(peer.stateData.asInstanceOf[Peer.ConnectedData].peerConnection === peerConnection2.ref)
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_DISCONNECTED]
+    assert(hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED].peerConnection === peerConnection2.ref)
 
     peerConnection3.send(peer, PeerConnection.ConnectionReady(peerConnection3.ref, remoteNodeId, fakeIPAddress.socketAddress, outgoing = false, localInit, remoteInit))
     // peer should kill previous connection
     deathWatch.expectTerminated(peerConnection2.ref)
     awaitCond(peer.stateData.asInstanceOf[Peer.ConnectedData].peerConnection === peerConnection3.ref)
+    hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_DISCONNECTED]
+    assert(hostedChannelGateway.expectMsgType[CMD_HOSTED_INPUT_RECONNECTED].peerConnection === peerConnection3.ref)
+    hostedChannelGateway.expectNoMessage
   }
 
   test("send state transitions to child reconnection actor", Tag("auto_reconnect"), Tag("with_node_announcement")) { f =>

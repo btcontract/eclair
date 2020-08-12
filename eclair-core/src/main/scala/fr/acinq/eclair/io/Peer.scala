@@ -30,6 +30,7 @@ import fr.acinq.eclair.Logs.LogCategory
 import fr.acinq.eclair.blockchain.EclairWallet
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.channel._
+import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.io.Monitoring.Metrics
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{wire, _}
@@ -45,9 +46,11 @@ import scodec.bits.ByteVector
  *
  * Created by PM on 26/08/2016.
  */
-class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRef, relayer: ActorRef, wallet: EclairWallet) extends FSMDiagnosticActorLogging[Peer.State, Peer.Data] {
+class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRef, relayer: ActorRef, hostedChannelGateway: ActorRef, wallet: EclairWallet) extends FSMDiagnosticActorLogging[Peer.State, Peer.Data] {
 
   import Peer._
+
+  lazy val hostedChannelId: ByteVector32 = hostedChanId(nodeParams.nodeId.value, remoteNodeId.value)
 
   startWith(INSTANTIATING, Nothing)
 
@@ -86,6 +89,18 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
 
   when(CONNECTED) {
     dropStaleMessages {
+      // START HOSTED CHANNEL MESSAGES
+
+      case Event(msg: wire.HostedChannelMessage, _: ConnectedData) =>
+        hostedChannelGateway ! CMD_HOSTED_MESSAGE(hostedChannelId, msg)
+        stay
+
+      case Event(msg: wire.HasChannelId, _: ConnectedData) if msg.channelId == hostedChannelId =>
+        hostedChannelGateway ! CMD_HOSTED_MESSAGE(hostedChannelId, msg)
+        stay
+
+      // END HOSTED CHANNEL MESSAGES
+
       case Event(_: Peer.Connect, _) =>
         sender ! PeerConnection.ConnectionResult.AlreadyConnected
         stay
@@ -176,6 +191,7 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
         Logs.withMdc(diagLog)(Logs.mdc(category_opt = Some(Logs.LogCategory.CONNECTION))) {
           log.info("connection lost")
         }
+        hostedChannelGateway ! CMD_HOSTED_INPUT_DISCONNECTED(hostedChannelId)
         if (d.channels.isEmpty) {
           // we have no existing channels, we can forget about this peer
           stopPeer()
@@ -198,6 +214,7 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
         log.info(s"got new connection, killing current one and switching")
         context unwatch d.peerConnection
         d.peerConnection ! PoisonPill
+        hostedChannelGateway ! CMD_HOSTED_INPUT_DISCONNECTED(hostedChannelId)
         d.channels.values.toSet[ActorRef].foreach(_ ! INPUT_DISCONNECTED) // we deduplicate with toSet because there might be two entries per channel (tmp id and final id)
         gotoConnected(connectionReady, d.channels)
 
@@ -258,7 +275,7 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
       NodeAddress.fromParts(connectionReady.address.getHostString, connectionReady.address.getPort).map(nodeAddress => nodeParams.db.peers.addOrUpdatePeer(remoteNodeId, nodeAddress))
     }
 
-    // let's bring existing/requested channels online
+    hostedChannelGateway ! CMD_HOSTED_INPUT_RECONNECTED(hostedChannelId, remoteNodeId, connectionReady.peerConnection)
     channels.values.toSet[ActorRef].foreach(_ ! INPUT_RECONNECTED(connectionReady.peerConnection, connectionReady.localInit, connectionReady.remoteInit)) // we deduplicate with toSet because there might be two entries per channel (tmp id and final id)
 
     goto(CONNECTED) using ConnectedData(connectionReady.address, connectionReady.peerConnection, connectionReady.localInit, connectionReady.remoteInit, channels)
@@ -344,7 +361,7 @@ object Peer {
   val UNKNOWN_CHANNEL_MESSAGE: ByteVector = ByteVector.view("unknown channel".getBytes())
   // @formatter:on
 
-  def props(nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRef, relayer: ActorRef, wallet: EclairWallet): Props = Props(new Peer(nodeParams, remoteNodeId, watcher, relayer: ActorRef, wallet))
+  def props(nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRef, relayer: ActorRef, hostedChannelGateway: ActorRef, wallet: EclairWallet): Props = Props(new Peer(nodeParams, remoteNodeId, watcher, relayer, hostedChannelGateway, wallet))
 
   // @formatter:off
 
