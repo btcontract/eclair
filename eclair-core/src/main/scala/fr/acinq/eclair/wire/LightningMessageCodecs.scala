@@ -326,6 +326,11 @@ object LightningMessageCodecs {
     .typecase(263, queryChannelRangeCodec)
     .typecase(264, replyChannelRangeCodec)
     .typecase(265, gossipTimestampFilterCodec)
+    .typecase(65535, HostedMessagesCodecs.invokeHostedChannelCodec)
+    .typecase(65533, HostedMessagesCodecs.initHostedChannelCodec)
+    .typecase(65531, HostedMessagesCodecs.lastCrossSignedStateCodec)
+    .typecase(65529, HostedMessagesCodecs.stateUpdateCodec)
+    .typecase(65527, HostedMessagesCodecs.stateOverrideCodec)
   // NB: blank lines to minimize merge conflicts
 
   //

@@ -17,11 +17,12 @@
 package fr.acinq.eclair.wire
 
 import java.net.{Inet4Address, Inet6Address, InetAddress, InetSocketAddress}
+import java.nio.ByteOrder.LITTLE_ENDIAN
 import java.nio.charset.StandardCharsets
 
 import com.google.common.base.Charsets
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
-import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Satoshi}
+import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Crypto, LexicographicalOrdering, Protocol, Satoshi}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, Features, MilliSatoshi, ShortChannelId, UInt64}
@@ -289,6 +290,95 @@ object ReplyChannelRange {
 case class GossipTimestampFilter(chainHash: ByteVector32,
                                  firstTimestamp: Long,
                                  timestampRange: Long) extends RoutingMessage with HasChainHash
+
+// NB: blank lines to minimize merge conflicts
+
+//
+
+//
+
+//
+
+//
+
+//
+
+//
+
+//
+
+//
+
+// Hosted message types
+
+trait HostedChannelMessage extends ChannelMessage
+
+case class InvokeHostedChannel(chainHash: ByteVector32, refundScriptPubKey: ByteVector, secret: ByteVector = ByteVector.empty) extends HostedChannelMessage {
+  require(secret.size <= 256, s"Hosted channel secret size=${secret.size}, max allowed=256")
+}
+
+case class InitHostedChannel(maxHtlcValueInFlightMsat: UInt64,
+                             htlcMinimumMsat: MilliSatoshi,
+                             maxAcceptedHtlcs: Int,
+                             channelCapacityMsat: MilliSatoshi,
+                             liabilityDeadlineBlockdays: Int,
+                             minimalOnchainRefundAmountSatoshis: Satoshi,
+                             initialClientBalanceMsat: MilliSatoshi,
+                             features: ByteVector) extends HostedChannelMessage
+
+case class LastCrossSignedState(refundScriptPubKey: ByteVector,
+                                initHostedChannel: InitHostedChannel,
+                                blockDay: Long,
+                                localBalanceMsat: MilliSatoshi,
+                                remoteBalanceMsat: MilliSatoshi,
+                                localUpdates: Long,
+                                remoteUpdates: Long,
+                                incomingHtlcs: List[UpdateAddHtlc],
+                                outgoingHtlcs: List[UpdateAddHtlc],
+                                remoteSigOfLocal: ByteVector64,
+                                localSigOfRemote: ByteVector64) extends HostedChannelMessage {
+
+  lazy val reverse: LastCrossSignedState =
+    copy(localUpdates = remoteUpdates, remoteUpdates = localUpdates,
+      localBalanceMsat = remoteBalanceMsat, remoteBalanceMsat = localBalanceMsat,
+      remoteSigOfLocal = localSigOfRemote, localSigOfRemote = remoteSigOfLocal,
+      incomingHtlcs = outgoingHtlcs, outgoingHtlcs = incomingHtlcs)
+
+  lazy val hostedSigHash: ByteVector32 = {
+    val inPayments = incomingHtlcs.map(LightningMessageCodecs.updateAddHtlcCodec.encode(_).require.toByteVector).sortWith(LexicographicalOrdering.isLessThan)
+    val outPayments = outgoingHtlcs.map(LightningMessageCodecs.updateAddHtlcCodec.encode(_).require.toByteVector).sortWith(LexicographicalOrdering.isLessThan)
+
+    val preimage =
+      refundScriptPubKey ++
+        Protocol.writeUInt16(initHostedChannel.liabilityDeadlineBlockdays, LITTLE_ENDIAN) ++
+        Protocol.writeUInt64(initHostedChannel.minimalOnchainRefundAmountSatoshis.toLong, LITTLE_ENDIAN) ++
+        Protocol.writeUInt64(initHostedChannel.channelCapacityMsat.toLong, LITTLE_ENDIAN) ++
+        Protocol.writeUInt64(initHostedChannel.initialClientBalanceMsat.toLong, LITTLE_ENDIAN) ++
+        Protocol.writeUInt32(blockDay, LITTLE_ENDIAN) ++
+        Protocol.writeUInt64(localBalanceMsat.toLong, LITTLE_ENDIAN) ++
+        Protocol.writeUInt64(remoteBalanceMsat.toLong, LITTLE_ENDIAN) ++
+        Protocol.writeUInt32(localUpdates, LITTLE_ENDIAN) ++
+        Protocol.writeUInt32(remoteUpdates, LITTLE_ENDIAN) ++
+        inPayments.foldLeft(ByteVector.empty) { case (acc, htlc) => acc ++ htlc } ++
+        outPayments.foldLeft(ByteVector.empty) { case (acc, htlc) => acc ++ htlc }
+
+    Crypto.sha256(preimage)
+  }
+
+  def verifyRemoteSig(pubKey: PublicKey): Boolean = Crypto.verifySignature(hostedSigHash, remoteSigOfLocal, pubKey)
+
+  def withLocalSigOfRemote(priv: PrivateKey): LastCrossSignedState = copy(localSigOfRemote = Crypto.sign(reverse.hostedSigHash, priv))
+
+  def isAhead(remoteLCSS: LastCrossSignedState): Boolean = remoteUpdates > remoteLCSS.localUpdates || localUpdates > remoteLCSS.remoteUpdates
+
+  def isEven(remoteLCSS: LastCrossSignedState): Boolean = remoteUpdates == remoteLCSS.localUpdates && localUpdates == remoteLCSS.remoteUpdates
+
+  def stateUpdate(isTerminal: Boolean): StateUpdate = StateUpdate(blockDay, localUpdates, remoteUpdates, localSigOfRemote, isTerminal)
+}
+
+case class StateUpdate(blockDay: Long, localUpdates: Long, remoteUpdates: Long, localSigOfRemoteLCSS: ByteVector64, isTerminal: Boolean) extends HostedChannelMessage
+
+case class StateOverride(blockDay: Long, localBalanceMsat: MilliSatoshi, localUpdates: Long, remoteUpdates: Long, localSigOfRemoteLCSS: ByteVector64) extends HostedChannelMessage
 
 // NB: blank lines to minimize merge conflicts
 
