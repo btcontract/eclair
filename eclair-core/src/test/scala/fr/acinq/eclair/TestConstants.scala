@@ -68,6 +68,7 @@ object TestConstants {
     def network(): NetworkDb
     def audit(): AuditDb
     def channels(): ChannelsDb
+    def hostedChannels(): HostedChannelsDb
     def peers(): PeersDb
     def payments(): PaymentsDb
     def pendingRelay(): PendingRelayDb
@@ -81,6 +82,7 @@ object TestConstants {
     override def network(): NetworkDb = new SqliteNetworkDb(connection)
     override def audit(): AuditDb = new SqliteAuditDb(connection)
     override def channels(): ChannelsDb = new SqliteChannelsDb(connection)
+    def hostedChannels(): HostedChannelsDb = null
     override def peers(): PeersDb = new SqlitePeersDb(connection)
     override def payments(): PaymentsDb = new SqlitePaymentsDb(connection)
     override def pendingRelay(): PendingRelayDb = new SqlitePendingRelayDb(connection)
@@ -106,6 +108,7 @@ object TestConstants {
     override def network(): NetworkDb = new PgNetworkDb
     override def audit(): AuditDb = new PgAuditDb
     override def channels(): ChannelsDb = new PgChannelsDb
+    override def hostedChannels(): HostedChannelsDb = new PgHostedChannelsDb
     override def peers(): PeersDb = new PgPeersDb
     override def payments(): PaymentsDb = new PgPaymentsDb
     override def pendingRelay(): PendingRelayDb = new PgPendingRelayDb

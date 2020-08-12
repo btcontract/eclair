@@ -16,7 +16,7 @@
 
 package fr.acinq.eclair.transactions
 
-import fr.acinq.eclair.MilliSatoshi
+import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.wire._
 
@@ -76,7 +76,11 @@ final case class CommitmentSpec(htlcs: Set[DirectedHtlc], feeratePerKw: FeerateP
 
   def findOutgoingHtlcById(id: Long): Option[OutgoingHtlc] = htlcs.collectFirst { case htlc: OutgoingHtlc if htlc.add.id == id => htlc }
 
-  val totalFunds: MilliSatoshi = toLocal + toRemote + htlcs.toSeq.map(_.add.amountMsat).sum
+  val inFlightIncoming: MilliSatoshi = htlcs.foldLeft(0.msat) { case (acc, htlc: IncomingHtlc) => acc + htlc.add.amountMsat case (acc, _) => acc }
+
+  val inFlightOutgoing: MilliSatoshi = htlcs.foldLeft(0.msat) { case (acc, htlc: OutgoingHtlc) => acc + htlc.add.amountMsat case (acc, _) => acc }
+
+  val totalFunds: MilliSatoshi = toLocal + toRemote + inFlightIncoming + inFlightOutgoing
 }
 
 object CommitmentSpec {
