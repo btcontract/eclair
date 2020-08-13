@@ -91,7 +91,7 @@ class HostedChannel(val nodeParams: NodeParams, remoteNodeId: PublicKey, router:
       val fullySignedLocalLCSS = LastCrossSignedState(data.invoke.refundScriptPubKey, initHostedChannel = data.init, blockDay = remoteSU.blockDay,
         localBalanceMsat = data.init.channelCapacityMsat - data.init.initialClientBalanceMsat, remoteBalanceMsat = data.init.initialClientBalanceMsat, localUpdates = 0L, remoteUpdates = 0L,
         incomingHtlcs = Nil, outgoingHtlcs = Nil, remoteSigOfLocal = remoteSU.localSigOfRemoteLCSS, localSigOfRemote = ByteVector64.Zeroes).withLocalSigOfRemote(nodeParams.privateKey)
-      if (math.abs(remoteSU.blockDay - nodeParams.currentBlockDay) > 1) {
+      if (isBlockDayOutOfSync(remoteSU)) {
         val message = InvalidBlockDay(channelId, nodeParams.currentBlockDay, remoteSU.blockDay).getMessage
         stay using HostedNothing sending Error(channelId, message)
       } else if (!fullySignedLocalLCSS.verifyRemoteSig(remoteNodeId)) {
@@ -127,9 +127,8 @@ class HostedChannel(val nodeParams: NodeParams, remoteNodeId: PublicKey, router:
       proceedOrClose(data.commits.channelId) {
         val isRightRemoteUpdateNumber = data.commits.lastCrossSignedState.remoteUpdates == remoteSU.localUpdates
         val isRightLocalUpdateNumber = data.commits.lastCrossSignedState.localUpdates == remoteSU.remoteUpdates
-        val isBlockdayAcceptable = math.abs(remoteSU.blockDay - nodeParams.currentBlockDay) <= 1
         val isRemoteSigOk = fullySignedLCSS.verifyRemoteSig(remoteNodeId)
-        if (!isBlockdayAcceptable) throw new ChannelException(data.commits.channelId, "Their blockday is wrong")
+        if (isBlockDayOutOfSync(remoteSU)) throw new ChannelException(data.commits.channelId, "Their blockday is wrong")
         if (!isRightRemoteUpdateNumber) throw new ChannelException(data.commits.channelId, "Their remote update number is wrong")
         if (!isRightLocalUpdateNumber) throw new ChannelException(data.commits.channelId, "Their local update number is wrong")
         if (!isRemoteSigOk) throw new ChannelException(data.commits.channelId, "Their signature is wrong")
@@ -231,17 +230,18 @@ class HostedChannel(val nodeParams: NodeParams, remoteNodeId: PublicKey, router:
       } else {
         val lcss1 = commits.nextLocalUnsignedLCSS(remoteSU.blockDay).copy(remoteSigOfLocal = remoteSU.localSigOfRemoteLCSS).withLocalSigOfRemote(nodeParams.privateKey)
         val commits1 = commits.copy(lastCrossSignedState = lcss1, localSpec = commits.nextLocalSpec, futureUpdates = Nil)
-        val isBlockdayAcceptable = math.abs(remoteSU.blockDay - nodeParams.currentBlockDay) <= 1
         val isRemoteSigOk = lcss1.verifyRemoteSig(remoteNodeId)
 
-        if (remoteSU.remoteUpdates < lcss1.localUpdates) {
-          stay sending commits1.lastCrossSignedState.stateUpdate(isTerminal = false)
-        } else if (!remoteSU.isTerminal) {
-          stay sending commits1.lastCrossSignedState.stateUpdate(isTerminal = true)
-        } else if (!isBlockdayAcceptable) {
+        if (isBlockDayOutOfSync(remoteSU)) {
+          // Whatever they send a blockday must always be correct
           localSuspend(commits1, ChannelErrorCodes.ERR_HOSTED_WRONG_BLOCKDAY)
+        } else if (remoteSU.remoteUpdates < lcss1.localUpdates) {
+          // This must be checked before sig check since signature may not match with many updates in-flight
+          stay sending commits1.lastCrossSignedState.stateUpdate(isTerminal = false)
         } else if (!isRemoteSigOk) {
           localSuspend(commits1, ChannelErrorCodes.ERR_HOSTED_WRONG_REMOTE_SIG)
+        } else if (!remoteSU.isTerminal) {
+          stay sending commits1.lastCrossSignedState.stateUpdate(isTerminal = true)
         } else {
           commits.nextRemoteUpdates.collect {
             case add: UpdateAddHtlc =>
@@ -427,6 +427,8 @@ class HostedChannel(val nodeParams: NodeParams, remoteNodeId: PublicKey, router:
       state
     }
   }
+
+  def isBlockDayOutOfSync(remoteSU: StateUpdate): Boolean = math.abs(remoteSU.blockDay - nodeParams.currentBlockDay) > 1
 
   def send(msg: LightningMessage): Unit = for (ac <- activeConnection) ac.peer ! OutgoingMessage(msg, ac.peerConnection)
 
