@@ -275,7 +275,7 @@ class Peer(val nodeParams: NodeParams, remoteNodeId: PublicKey, watcher: ActorRe
       NodeAddress.fromParts(connectionReady.address.getHostString, connectionReady.address.getPort).map(nodeAddress => nodeParams.db.peers.addOrUpdatePeer(remoteNodeId, nodeAddress))
     }
 
-    hostedChannelGateway ! CMD_HOSTED_INPUT_RECONNECTED(hostedChannelId, remoteNodeId, connectionReady.peerConnection)
+    hostedChannelGateway ! CMD_HOSTED_INPUT_RECONNECTED(hostedChannelId, remoteNodeId, self, connectionReady.peerConnection)
     channels.values.toSet[ActorRef].foreach(_ ! INPUT_RECONNECTED(connectionReady.peerConnection, connectionReady.localInit, connectionReady.remoteInit)) // we deduplicate with toSet because there might be two entries per channel (tmp id and final id)
 
     goto(CONNECTED) using ConnectedData(connectionReady.address, connectionReady.peerConnection, connectionReady.localInit, connectionReady.remoteInit, channels)
