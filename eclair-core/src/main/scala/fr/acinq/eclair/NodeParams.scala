@@ -89,10 +89,14 @@ case class NodeParams(keyManager: KeyManager,
                       maxPaymentAttempts: Int,
                       enableTrampolinePayment: Boolean,
                       hostedParams: HostedParams) {
+
   val privateKey = keyManager.nodeKey.privateKey
+
   val nodeId = keyManager.nodeId
 
   def currentBlockHeight: Long = blockCount.get
+
+  def currentBlockDay: Long = currentBlockHeight / blocksPerDay
 }
 
 object NodeParams {

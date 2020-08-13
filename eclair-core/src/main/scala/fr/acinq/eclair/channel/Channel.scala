@@ -98,6 +98,23 @@ object Channel {
    */
   case class OutgoingMessage(msg: LightningMessage, peerConnection: ActorRef)
 
+  def origin(c: CMD_ADD_HTLC, sender: ActorRef): Origin = c.upstream match {
+    case Upstream.Local(id) => Origin.Local(id, Some(sender)) // we were the origin of the payment
+    case Upstream.Relayed(u) => Origin.Relayed(u.channelId, u.id, u.amountMsat, c.amount) // this is a relayed payment to an outgoing channel
+    case Upstream.TrampolineRelayed(us) => Origin.TrampolineRelayed(us.map(u => (u.channelId, u.id)).toList, Some(sender)) // this is a relayed payment to an outgoing node
+  }
+
+  def failTimedout(adds: Set[UpdateAddHtlc], relayer: ActorRef, commits: ChannelCommitments, log: akka.event.LoggingAdapter): Unit =
+    adds.foreach { add =>
+      commits.originChannels.get(add.id) match {
+        case Some(origin) =>
+          log.info(s"failing htlc #${add.id} paymentHash=${add.paymentHash} origin=$origin: htlc timed out")
+          relayer ! Relayer.ForwardOnChainFail(HtlcsTimedoutDownstream(commits.channelId, Set(add)), origin, add)
+        case None =>
+          // same as for fulfilling the htlc (no big deal)
+          log.info(s"cannot fail timedout htlc #${add.id} paymentHash=${add.paymentHash} (origin not found)")
+      }
+    }
 }
 
 class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId: PublicKey, blockchain: ActorRef, relayer: ActorRef, origin_opt: Option[ActorRef] = None)(implicit ec: ExecutionContext = ExecutionContext.Implicits.global) extends FSM[State, Data] with FSMDiagnosticActorLogging[State, Data] {
@@ -194,7 +211,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
 
     case Event(INPUT_RESTORED(data), _) =>
       log.info(s"restoring channel channelId=${data.channelId}")
-      context.system.eventStream.publish(ChannelRestored(self, peer, remoteNodeId, data.commitments.localParams.isFunder, data.channelId, data))
+      context.system.eventStream.publish(ChannelRestored(self, peer, remoteNodeId, data.commitments.localParams.isFunder, data.channelId, data.commitments))
       data match {
         //NB: order matters!
         case closing: DATA_CLOSING if Closing.nothingAtStake(closing) =>
@@ -628,15 +645,15 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       // note: spec would allow us to keep sending new htlcs after having received their shutdown (and not sent ours)
       // but we want to converge as fast as possible and they would probably not route them anyway
       val error = NoMoreHtlcsClosingInProgress(d.channelId)
-      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, error, origin(c), Some(d.channelUpdate), Some(c)), c)
+      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, error, origin(c, sender), Some(d.channelUpdate), Some(c)), c)
 
     case Event(c: CMD_ADD_HTLC, d: DATA_NORMAL) =>
-      Commitments.sendAdd(d.commitments, c, origin(c), nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
+      Commitments.sendAdd(d.commitments, c, origin(c, sender), nodeParams.currentBlockHeight, nodeParams.onChainFeeConf) match {
         case Success((commitments1, add)) =>
           if (c.commit) self ! CMD_SIGN
           context.system.eventStream.publish(AvailableBalanceChanged(self, d.channelId, d.shortChannelId, commitments1))
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending add
-        case Failure(cause) => handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, cause, origin(c), Some(d.channelUpdate), Some(c)), c)
+        case Failure(cause) => handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, cause, origin(c, sender), Some(d.channelUpdate), Some(c)), c)
       }
 
     case Event(add: UpdateAddHtlc, d: DATA_NORMAL) =>
@@ -1318,16 +1335,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
         case Some(c: Closing.RemoteClose) => Closing.timedoutHtlcs(d.commitments.commitmentFormat, c.remoteCommit, c.remoteCommitPublished, d.commitments.remoteParams.dustLimit, tx)
         case _ => Set.empty[UpdateAddHtlc] // we lose htlc outputs in dataloss protection scenarii (future remote commit)
       }
-      timedoutHtlcs.foreach { add =>
-        d.commitments.originChannels.get(add.id) match {
-          case Some(origin) =>
-            log.info(s"failing htlc #${add.id} paymentHash=${add.paymentHash} origin=$origin: htlc timed out")
-            relayer ! Relayer.ForwardOnChainFail(HtlcsTimedoutDownstream(d.channelId, Set(add)), origin, add)
-          case None =>
-            // same as for fulfilling the htlc (no big deal)
-            log.info(s"cannot fail timedout htlc #${add.id} paymentHash=${add.paymentHash} (origin not found)")
-        }
-      }
+      failTimedout(timedoutHtlcs, relayer, d.commitments, log: akka.event.LoggingAdapter)
       // we also need to fail outgoing htlcs that we know will never reach the blockchain
       Closing.overriddenOutgoingHtlcs(d, tx).foreach { add =>
         d.commitments.originChannels.get(add.id) match {
@@ -1646,7 +1654,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
     case Event(c: CMD_ADD_HTLC, d: HasCommitments) =>
       log.info(s"rejecting htlc request in state=$stateName")
       val error = ChannelUnavailable(d.channelId)
-      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, error, origin(c), None, Some(c)), c) // we don't provide a channel_update: this will be a permanent channel failure
+      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, error, origin(c, sender), None, Some(c)), c) // we don't provide a channel_update: this will be a permanent channel failure
 
     case Event(c: CMD_CLOSE, d) => handleCommandError(CommandUnavailableInThisState(Helpers.getChannelId(d), "close", stateName), c)
 
@@ -1939,7 +1947,7 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       goto(stateName) using d.copy(channelUpdate = channelUpdate)
     } else {
       // channel is already disabled, we reply to the request
-      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, ChannelUnavailable(d.channelId), origin(c), Some(d.channelUpdate), Some(c)), c) // can happen if we are in OFFLINE or SYNCING state (channelUpdate will have enable=false)
+      handleCommandError(AddHtlcFailed(d.channelId, c.paymentHash, ChannelUnavailable(d.channelId), origin(c, sender), Some(d.channelUpdate), Some(c)), c) // can happen if we are in OFFLINE or SYNCING state (channelUpdate will have enable=false)
     }
   }
 
@@ -2304,12 +2312,6 @@ class Channel(val nodeParams: NodeParams, val wallet: EclairWallet, remoteNodeId
       } catch {
         case t: Throwable => handleLocalError(t, event.stateData, None)
       }
-  }
-
-  def origin(c: CMD_ADD_HTLC): Origin = c.upstream match {
-    case Upstream.Local(id) => Origin.Local(id, Some(sender)) // we were the origin of the payment
-    case Upstream.Relayed(u) => Origin.Relayed(u.channelId, u.id, u.amountMsat, c.amount) // this is a relayed payment to an outgoing channel
-    case Upstream.TrampolineRelayed(us) => Origin.TrampolineRelayed(us.map(u => (u.channelId, u.id)).toList, Some(sender)) // this is a relayed payment to an outgoing node
   }
 
   def feePaid(fee: Satoshi, tx: Transaction, desc: String, channelId: ByteVector32): Unit = Try { // this may fail with an NPE in tests because context has been cleaned up, but it's not a big deal

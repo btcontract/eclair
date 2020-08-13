@@ -16,12 +16,15 @@
 
 package fr.acinq.eclair.channel
 
+import java.nio.charset.StandardCharsets
+
 import fr.acinq.bitcoin.Crypto.PrivateKey
-import fr.acinq.bitcoin.{ByteVector32, Satoshi, Transaction}
+import fr.acinq.bitcoin.{ByteVector32, ByteVector64, Satoshi, Transaction}
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
 import fr.acinq.eclair.payment.relay.Origin
 import fr.acinq.eclair.wire.{AnnouncementSignatures, ChannelUpdate, Error, UpdateAddHtlc}
 import fr.acinq.eclair.{CltvExpiry, CltvExpiryDelta, MilliSatoshi, UInt64}
+import scodec.bits.ByteVector
 
 /**
  * Created by PM on 11/04/2017.
@@ -92,4 +95,34 @@ case class InvalidFailureCode                  (override val channelId: ByteVect
 case class PleasePublishYourCommitment         (override val channelId: ByteVector32) extends ChannelException(channelId, "please publish your local commitment")
 case class AddHtlcFailed                       (override val channelId: ByteVector32, paymentHash: ByteVector32, t: Throwable, origin: Origin, channelUpdate: Option[ChannelUpdate], originalCommand: Option[CMD_ADD_HTLC]) extends ChannelException(channelId, s"cannot add htlc with origin=$origin reason=${t.getMessage}")
 case class CommandUnavailableInThisState       (override val channelId: ByteVector32, command: String, state: State) extends ChannelException(channelId, s"cannot execute command=$command in state=$state")
+//
+case class InvalidBlockDay                     (override val channelId: ByteVector32, localBlockDay: Long, remoteBlockDay: Long) extends ChannelException(channelId, s"invalid block day local=$localBlockDay remote=$remoteBlockDay")
+case class InvalidRemoteStateSignature         (override val channelId: ByteVector32, localHostedSigHash: ByteVector32, remoteSignature: ByteVector64) extends ChannelException(channelId, s"invalid remote state signature localHostedSigHash=$localHostedSigHash remoteSignature=$remoteSignature")
 // @formatter:on
+
+object ChannelErrorCodes {
+  final val ERR_HOSTED_WRONG_BLOCKDAY = ByteVector.fromValidHex("0001")
+  final val ERR_HOSTED_WRONG_LOCAL_SIG = ByteVector.fromValidHex("0002")
+  final val ERR_HOSTED_WRONG_REMOTE_SIG = ByteVector.fromValidHex("0003")
+  final val ERR_HOSTED_TOO_MANY_STATE_UPDATES = ByteVector.fromValidHex("0005")
+  final val ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC = ByteVector.fromValidHex("0006")
+  final val ERR_HOSTED_IN_FLIGHT_HTLC_WHILE_RESTORING = ByteVector.fromValidHex("0007")
+  final val ERR_HOSTED_CHANNEL_DENIED = ByteVector.fromValidHex("0008")
+
+  val knownHostedCodes: Set[ByteVector] = Set(
+    ERR_HOSTED_WRONG_BLOCKDAY,
+    ERR_HOSTED_WRONG_LOCAL_SIG,
+    ERR_HOSTED_WRONG_REMOTE_SIG,
+    ERR_HOSTED_TOO_MANY_STATE_UPDATES,
+    ERR_HOSTED_TIMED_OUT_OUTGOING_HTLC,
+    ERR_HOSTED_IN_FLIGHT_HTLC_WHILE_RESTORING,
+    ERR_HOSTED_CHANNEL_DENIED
+  )
+
+  def toHostedAscii(error: Error): String =
+    knownHostedCodes.contains(error.tag) match {
+      case true if error.taggedData.isEmpty => s"hosted-code-${error.tag.toHex}"
+      case true => error.toTaggedAscii
+      case false => error.toAscii
+    }
+}

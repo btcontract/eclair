@@ -23,6 +23,7 @@ import java.util.UUID
 
 import akka.actor.ActorSystem
 import com.typesafe.config.Config
+import fr.acinq.eclair.db.inmem.InmemHostedChannelsDb
 import fr.acinq.eclair.db.pg.PgUtils.LockType.LockType
 import fr.acinq.eclair.db.pg.PgUtils._
 import fr.acinq.eclair.db.pg._

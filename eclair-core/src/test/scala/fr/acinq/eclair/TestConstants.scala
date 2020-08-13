@@ -16,6 +16,7 @@
 
 package fr.acinq.eclair
 
+import java.io.File
 import java.sql.{Connection, DriverManager, Statement}
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -29,7 +30,9 @@ import fr.acinq.eclair.NodeParams.BITCOIND
 import fr.acinq.eclair.blockchain.fee._
 import fr.acinq.eclair.channel.HostedParams
 import fr.acinq.eclair.crypto.LocalKeyManager
+import fr.acinq.eclair.db.Databases.FileBackup
 import fr.acinq.eclair.db._
+import fr.acinq.eclair.db.inmem.InmemHostedChannelsDb
 import fr.acinq.eclair.db.pg.PgUtils.NoLock
 import fr.acinq.eclair.db.pg._
 import fr.acinq.eclair.db.sqlite._
@@ -128,7 +131,15 @@ object TestConstants {
     // @formatter:on
   }
 
-  def inMemoryDb(connection: Connection = sqliteInMemory()): Databases = Databases.sqliteDatabaseByConnections(connection, connection, connection)
+  def inMemoryDb(connection: Connection = sqliteInMemory()): Databases = new Databases {
+    override val network = new SqliteNetworkDb(connection)
+    override val audit = new SqliteAuditDb(connection)
+    override val channels = new SqliteChannelsDb(connection)
+    override val hostedChannels: HostedChannelsDb = new InmemHostedChannelsDb
+    override val peers = new SqlitePeersDb(connection)
+    override val payments = new SqlitePaymentsDb(connection)
+    override val pendingRelay = new SqlitePendingRelayDb(connection)
+  }
 
   object Alice {
     val seed = ByteVector32(ByteVector.fill(32)(1))

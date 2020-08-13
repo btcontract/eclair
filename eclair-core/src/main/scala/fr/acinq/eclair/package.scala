@@ -33,6 +33,11 @@ package object eclair {
    */
   val secureRandom = new SecureRandom()
 
+  /**
+   * How many blocks Bitcoin network produces on average per day
+   */
+  val blocksPerDay: Int = 144
+
   def randomBytes(length: Int): ByteVector = {
     val buffer = new Array[Byte](length)
     secureRandom.nextBytes(buffer)

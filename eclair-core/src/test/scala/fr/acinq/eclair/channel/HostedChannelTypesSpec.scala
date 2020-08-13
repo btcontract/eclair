@@ -6,10 +6,8 @@ import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.{Block, ByteVector32, ByteVector64, Crypto, Satoshi}
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.fee.FeeratePerKw
-import fr.acinq.eclair.crypto.Sphinx.PaymentPacket
 import fr.acinq.eclair.payment.OutgoingPacket
 import fr.acinq.eclair.payment.relay.Origin.Local
-import fr.acinq.eclair.payment.send.PaymentLifecycle
 import fr.acinq.eclair.router.Router.ChannelHop
 import fr.acinq.eclair.transactions.CommitmentSpec
 import fr.acinq.eclair.wire.Onion.FinalLegacyPayload
@@ -86,7 +84,7 @@ class HostedChannelTypesSpec extends AnyFunSuite {
     val payment_preimage: ByteVector32 = randomBytes32
     val payment_hash: ByteVector32 = Crypto.sha256(payment_preimage)
     val expiry = CltvExpiryDelta(144).toCltvExpiry(currentBlockHeight)
-    val cmd = OutgoingPacket.buildCommand(Upstream.Local(UUID.randomUUID), payment_hash, ChannelHop(null, TestConstants.Bob.nodeParams.nodeId, null) :: Nil, FinalLegacyPayload(amount, expiry))._1.copy(commit = false)
+    val cmd = OutgoingPacket.buildCommand(Upstream.Local(UUID.randomUUID), payment_hash, ChannelHop(null, destination, null) :: Nil, FinalLegacyPayload(amount, expiry))._1.copy(commit = false)
     (payment_preimage, cmd)
   }
 

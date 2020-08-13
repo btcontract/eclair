@@ -86,11 +86,11 @@ class Relayer(nodeParams: NodeParams, router: ActorRef, register: ActorRef, paym
 
   def main(channelUpdates: ChannelUpdates, node2channels: NodeChannels): Receive = {
     case GetOutgoingChannels(enabledOnly) =>
-      val channels = if (enabledOnly) {
-        channelUpdates.values.filter(o => Announcements.isEnabled(o.channelUpdate.channelFlags))
-      } else {
-        channelUpdates.values
-      }
+      val channels: Iterable[OutgoingChannel] = for {
+        // Omit hosted channels by matching only normal commitments
+        o @ OutgoingChannel(_, channelUpdate, _: Commitments) <- channelUpdates.values
+        if !enabledOnly || Announcements.isEnabled(channelUpdate.channelFlags)
+      } yield o
       sender ! OutgoingChannels(channels.toSeq)
 
     case LocalChannelUpdate(_, channelId, shortChannelId, remoteNodeId, _, channelUpdate, commitments) =>
@@ -225,7 +225,7 @@ object Relayer extends Logging {
    * @param enabledOnly if true, filter out disabled channels.
    */
   case class GetOutgoingChannels(enabledOnly: Boolean = true)
-  case class OutgoingChannel(nextNodeId: PublicKey, channelUpdate: ChannelUpdate, commitments: Commitments) {
+  case class OutgoingChannel(nextNodeId: PublicKey, channelUpdate: ChannelUpdate, commitments: ChannelCommitments) {
     def toUsableBalance: UsableBalance = UsableBalance(
       remoteNodeId = nextNodeId,
       shortChannelId = channelUpdate.shortChannelId,

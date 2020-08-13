@@ -92,7 +92,7 @@ case class HOSTED_DATA_COMMITMENTS(remoteNodeId: PublicKey,
     localSigned.add
   }
 
-  // Meaning sent from us to client
+  // Meaning sent from us to client and still pending
   def timedOutOutgoingHtlcs(blockheight: Long): Set[UpdateAddHtlc] = for {
     OutgoingHtlc(add) <- currentAndNextInFlightHtlcs if blockheight > add.cltvExpiry.toLong
     if !failedToPeerHtlcLeftoverIds.contains(add.id) && !fulfilledByPeerHtlcLeftoverIds.contains(add.id)
